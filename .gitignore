@@ -1,0 +1,7 @@
+.runtime/
+data/
+results/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/

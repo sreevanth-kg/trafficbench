@@ -1,0 +1,8 @@
+[
+  {"id": "west_to_casino", "origin": [43.7277, 7.4187], "destination": [43.7395, 7.4273]},
+  {"id": "casino_to_west", "origin": [43.7395, 7.4273], "destination": [43.7277, 7.4187]},
+  {"id": "station_to_port", "origin": [43.7384, 7.4190], "destination": [43.7353, 7.4236]},
+  {"id": "port_to_station", "origin": [43.7353, 7.4236], "destination": [43.7384, 7.4190]},
+  {"id": "west_to_station", "origin": [43.7277, 7.4187], "destination": [43.7384, 7.4190]},
+  {"id": "casino_to_port", "origin": [43.7395, 7.4273], "destination": [43.7353, 7.4236]}
+]
