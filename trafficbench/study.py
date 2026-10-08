@@ -358,7 +358,8 @@ def evaluate(args, directory, selection, data, origins, device, records=None):
                     corrections = calibrate_intervals(quantiles, val_truth)
                     del quantiles, gates
                     quantiles, gates = distribution_predictions(model, test_loader, device)
-                    record["uncertainty_metrics"] = interval_metrics(quantiles, truth, corrections)
+                    record["uncertainty_metrics"] = interval_metrics(
+                        quantiles, truth, corrections, data.filled[origins["test"]])
                     record["validation_interval_corrections_mph"] = corrections
                     record["mean_expert_weights"] = gates.mean(axis=(0, 1, 2), dtype=np.float64).tolist()
                     del quantiles, gates
@@ -445,11 +446,16 @@ def evaluate(args, directory, selection, data, origins, device, records=None):
                "routing_attempted_trips": routing_report["attempted_trips"],
                "routing_paired_comparisons": routing_comparisons,
                "total_training_seconds": sum(record["training_seconds"] for seed in records.values() for record in seed.values()),
-               "budget_diagnostics": {method: {"seeds_used": [seed for seed in args.seeds if method in records[str(seed)]],
-                                             "best_epochs": [records[str(seed)][method]["best_epoch"] for seed in args.seeds if method in records[str(seed)]],
-                                             "epochs_run": [records[str(seed)][method]["epochs_run"] for seed in args.seeds if method in records[str(seed)]],
-                                             "runs_reaching_cap": sum(records[str(seed)][method]["reached_epoch_cap"] for seed in args.seeds if method in records[str(seed)])}
-                                      for method in [*args.baselines, *args.candidates]},
+                "budget_diagnostics": {method: {"seeds_used": [seed for seed in args.seeds if method in records[str(seed)]],
+                                              "best_epochs": [records[str(seed)][method]["best_epoch"] for seed in args.seeds if method in records[str(seed)]],
+                                              "epochs_run": [records[str(seed)][method]["epochs_run"] for seed in args.seeds if method in records[str(seed)]],
+                                              "parameter_counts": [records[str(seed)][method]["parameters"] for seed in args.seeds if method in records[str(seed)]],
+                                              "inference_seconds": [tested[str(seed)][method]["inference_seconds"] for seed in args.seeds if method in tested[str(seed)]],
+                                              "runs_reaching_cap": sum(records[str(seed)][method]["reached_epoch_cap"] for seed in args.seeds if method in records[str(seed)])}
+                                       for method in [*args.baselines, *args.candidates]},
+                "interval_coverage": {method: {str(seed): tested[str(seed)][method].get("uncertainty_metrics", [])
+                                                for seed in args.seeds if method in tested[str(seed)]}
+                                      for method in candidates},
                "interpretation": "Mean and sample SD across independent trained seeds, not an ensemble. The public test period was also used in the earlier 10-epoch study. Seed/day intervals are conditional on this network and period."}
     write_json(directory / "comparison_report.json", summary)
     with (directory / "forecast_summary.csv").open("w", newline="") as stream:
@@ -535,9 +541,24 @@ def write_markdown(directory, summary):
             result = row[measure]
             low, high = result["seed_and_day_bootstrap_95_percent_interval"]
             lines += ["", f"{row['model']} vs Graph WaveNet, {row['seed_group']}, paired seeds {row['seeds_used']}: mean improvement {result['mean_improvement']:.3f} {units}, 95% paired seed/day interval [{low:.3f}, {high:.3f}] {units}."]
+    lines += ["", "## Parameter counts and inference latency", "",
+              "Parameter counts are per model checkpoint. Inference time is the measured configured-device test prediction loop.", "",
+              "| Model | Completed seeds | Parameters | Test inference seconds |", "| --- | --- | --- | ---: |"]
+    for method, values in summary["budget_diagnostics"].items():
+        lines.append(f"| {method} | {values['seeds_used']} | {values['parameter_counts']} | {values['inference_seconds']} |")
     lines += ["", "## Training budget diagnostics", "", "| Model | Completed seeds | Best epochs | Epochs run | Runs reaching cap |", "| --- | --- | --- | --- | ---: |"]
     for method, values in summary["budget_diagnostics"].items():
         lines.append(f"| {method} | {values['seeds_used']} | {values['best_epochs']} | {values['epochs_run']} | {values['runs_reaching_cap']} |")
+    lines += ["", "## Interval coverage by horizon and regime", "",
+              "Intervals are calibrated on validation data only. Regime labels use the fixed 40 mph congestion and 8 mph change thresholds.", "",
+              "| Model | Seed | Horizon | Regime | Count | Coverage | Mean width (mph) |", "| --- | ---: | ---: | --- | ---: | ---: | ---: |"]
+    for method, seed_records in summary["interval_coverage"].items():
+        for seed, metrics in seed_records.items():
+            for row in metrics:
+                for regime, values in row["coverage_by_regime"].items():
+                    coverage = "n/a" if values["empirical_coverage"] is None else f"{values['empirical_coverage']:.4f}"
+                    width = "n/a" if values["mean_width_mph"] is None else f"{values['mean_width_mph']:.3f}"
+                    lines.append(f"| {method} | {seed} | {row['horizon_minutes']} min | {regime} | {values['count']} | {coverage} | {width} |")
     lines += ["", f"Total recorded training time: {summary['total_training_seconds'] / 3600:.2f} hours, including validation/checkpointing; excluding evaluation and routing.", "",
               "These are independent model runs, not averaged ensemble predictions or the best test seed. Maximum epochs with early stopping do not guarantee convergence.",
               "The candidate family has additional pinball/router objectives; baseline optimizer settings and per-run budgets are matched. Architecture-search cost is additional.",

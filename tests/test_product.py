@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from trafficbench.discovery import calibrate_intervals, paired_day_bootstrap
+from trafficbench.discovery import calibrate_intervals, interval_metrics, paired_day_bootstrap
 from trafficbench.inference import preprocess_request
 
 
@@ -42,6 +42,19 @@ class UncertaintyAndComparisonTests(unittest.TestCase):
         truth = np.full((2, 12, 1), 55.0)
         truth[0] = 0
         self.assertEqual(calibrate_intervals(quantiles, truth), [5.0] * 12)
+
+    def test_interval_coverage_is_reported_by_fixed_regime(self):
+        quantiles = np.zeros((1, 12, 3, 3), dtype=float)
+        quantiles[..., 0] = 40
+        quantiles[..., 1] = 45
+        quantiles[..., 2] = 50
+        truth = np.full((1, 12, 3), 45.0)
+        latest = np.full((1, 3), 45.0)
+        rows = interval_metrics(quantiles, truth, [0.0] * 12, latest)
+        self.assertEqual(rows[0]["coverage_by_regime"]["free_flow"]["count"], 3)
+        self.assertEqual(rows[0]["coverage_by_regime"]["congested"]["count"], 0)
+        self.assertEqual(rows[0]["coverage_by_regime"]["transition"]["count"], 0)
+        self.assertEqual(rows[0]["coverage_by_regime"]["free_flow"]["empirical_coverage"], 1.0)
 
     def test_day_block_comparison_preserves_known_paired_gain(self):
         truth = np.full((4, 12, 1), 20.0)

@@ -107,16 +107,34 @@ def calibrate_intervals(quantiles, truth, coverage=0.8):
     return corrections
 
 
-def interval_metrics(quantiles, truth, corrections):
+def interval_metrics(quantiles, truth, corrections, latest=None):
     valid = np.isfinite(truth) & (truth > 0)
     lower = np.maximum(0, quantiles[..., 0] - np.asarray(corrections)[None, :, None])
     upper = quantiles[..., 2] + np.asarray(corrections)[None, :, None]
     rows = []
+    if latest is not None:
+        change = np.abs(truth - latest[:, None])
+        regimes = {"free_flow": valid & (truth >= 40) & (change < 8),
+                   "congested": valid & (truth < 40),
+                   "transition": valid & (truth >= 40) & (change >= 8)}
+    else:
+        regimes = {"all": valid}
     for minutes, step in ((15, 2), (30, 5), (60, 11)):
         mask = valid[:, step]
-        rows.append({"horizon_minutes": minutes,
-                     "empirical_coverage": float(((truth[:, step] >= lower[:, step]) & (truth[:, step] <= upper[:, step]))[mask].mean()),
-                     "mean_width_mph": float((upper[:, step] - lower[:, step])[mask].mean())})
+        covered = (truth[:, step] >= lower[:, step]) & (truth[:, step] <= upper[:, step])
+        row = {"horizon_minutes": minutes,
+               "empirical_coverage": float(covered[mask].mean()),
+               "mean_width_mph": float((upper[:, step] - lower[:, step])[mask].mean()),
+               "coverage_by_regime": {}}
+        for name, regime_mask in regimes.items():
+            selected = regime_mask[:, step]
+            count = int(selected.sum())
+            row["coverage_by_regime"][name] = {
+                "count": count,
+                "empirical_coverage": float(covered[selected].mean()) if count else None,
+                "mean_width_mph": float((upper[:, step] - lower[:, step])[selected].mean()) if count else None,
+            }
+        rows.append(row)
     return rows
 
 
@@ -189,7 +207,8 @@ def evaluate_selected(args):
                         sensor_ids=np.asarray(data.sensor_ids))
     forecast_sources[name] = str((evaluation / f"{name}_forecasts.npz").resolve())
     record = {**selection["candidates"][name], "metrics": speed_metrics(predictions, truth),
-              "inference_seconds": inference_seconds, "uncertainty_metrics": interval_metrics(quantiles, truth, corrections),
+              "inference_seconds": inference_seconds, "uncertainty_metrics": interval_metrics(
+                  quantiles, truth, corrections, data.filled[origins]),
               "validation_interval_corrections_mph": corrections,
                "mean_expert_weights": gates.mean(axis=(0, 1, 2), dtype=np.float64).tolist(),
               "single_seed": selection["arguments"]["seed"], "epochs": selection["arguments"]["epochs"]}
