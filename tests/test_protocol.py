@@ -1,18 +1,51 @@
 """Regression checks for leakage, masking, graph propagation and time-aware replay."""
 
 import unittest
+import json
+import pickle
+import tempfile
+from pathlib import Path
 
+import h5py
 import networkx as nx
 import numpy as np
 import torch
 
-from trafficbench.data import causal_fill, split_origins
+from trafficbench.data import causal_fill, load_data, split_origins
 from trafficbench.metrics import speed_metrics
 from trafficbench.models import DiffusionConvolution, GraphWaveNet
-from trafficbench.routing import MPH_TO_MPS, select_path, simulate_path
+from trafficbench.routing import MPH_TO_MPS, build_graph, select_path, simulate_path
 
 
 class TemporalProtocolTests(unittest.TestCase):
+    def test_loader_uses_manifest_artifact_names_for_second_dataset(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            timestamps = np.datetime64("2017-01-01") + np.arange(200) * np.timedelta64(5, "m")
+            values = np.full((200, 2), 55, dtype=np.float32)
+            with h5py.File(directory / "pems-bay.h5", "w") as store:
+                group = store.create_group("speed")
+                group.create_dataset("axis0", data=np.asarray([400001, 400017]))
+                group.create_dataset("block0_items", data=np.asarray([400001, 400017]))
+                group.create_dataset("axis1", data=timestamps.astype("datetime64[ns]").astype(np.int64))
+                group.create_dataset("block0_values", data=values)
+            with (directory / "adj_mx_bay.pkl").open("wb") as stream:
+                pickle.dump((["400017", "400001"], {}, np.asarray([[1, 0.7], [0.2, 1]])), stream)
+            (directory / "manifest.json").write_text(json.dumps({
+                "dataset": "PEMS-BAY", "observation_file": "pems-bay.h5", "hdf_key": "speed", "adjacency_file": "adj_mx_bay.pkl",
+                "artifacts": [],
+            }))
+            data = load_data(directory)
+            self.assertEqual(data.dataset, "PEMS-BAY")
+            self.assertEqual(data.sensor_ids, ["400001", "400017"])
+            self.assertEqual(data.raw.shape, (200, 2))
+            np.testing.assert_allclose(data.adjacency, [[1, 0.2], [0.7, 1]])
+            distance_file = directory / "distances_bay_2017.csv"
+            distance_file.write_text("400001,400017,1200\n400017,400001,1400\n")
+            graph = build_graph(data, distance_file)
+            self.assertEqual(graph[0][1]["length_m"], 1200)
+            self.assertEqual(graph[1][0]["length_m"], 1400)
+
     def test_targets_do_not_overlap_splits_and_gaps_are_excluded(self):
         timestamps = np.datetime64("2012-03-01") + np.arange(200) * np.timedelta64(5, "m")
         timestamps[55:] += np.timedelta64(1, "D")

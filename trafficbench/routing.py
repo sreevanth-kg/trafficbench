@@ -23,7 +23,13 @@ def build_graph(data, distance_file):
     graph = nx.DiGraph()
     graph.add_nodes_from(range(len(data.sensor_ids)))
     lookup = {sensor: index for index, sensor in enumerate(data.sensor_ids)}
-    distances = pd.read_csv(distance_file, dtype={"from": str, "to": str})
+    # METR-LA includes a header; the original PEMS-BAY distance artifact does not.
+    with Path(distance_file).open() as stream:
+        first = next(csv.reader(stream))
+    has_header = first[:2] == ["from", "to"]
+    distances = pd.read_csv(distance_file, header=0 if has_header else None,
+                            names=["from", "to", "distance"],
+                            dtype={"from": str, "to": str})
     for row in distances.itertuples(index=False, name=None):
         source, target, length = row
         if source not in lookup or target not in lookup or not np.isfinite(length) or length <= 0:
@@ -109,7 +115,8 @@ def run(args):
             predictions[name] = prediction.copy()
     if origins is None or not set(origins).issubset(set(data.origins["test"])):
         raise ValueError("Forecast origins must be valid test origins.")
-    graph = build_graph(data, Path(args.data) / "distances_la_2012.csv")
+    distance_file = current_manifest.get("distance_file", "distances_la_2012.csv")
+    graph = build_graph(data, Path(args.data) / distance_file)
     pairs = choose_pairs(graph, args.pairs, args.seed)
     selected = np.linspace(0, len(origins) - 1, min(args.departures, len(origins)), dtype=int)
     step = args.departure_minutes // 5 - 1
@@ -154,11 +161,12 @@ def run(args):
             "fraction_routes_changed": float(np.mean([record["path_changed_vs_static"] for record in group])),
         }
     report = {
-        "scope": "Abstract METR-LA sensor-graph simulation; not legal street-level navigation or measured trip time",
+        "dataset": data.dataset,
+        "scope": f"Abstract {data.dataset} sensor-graph simulation; not legal street-level navigation or measured trip time",
         "forecast_scope": forecast_report["scope"],
         "routing_algorithm": "NetworkX Dijkstra with fixed snapshot edge costs; route fixed before replay",
         "topology": "Positive directed DCRNN physical adjacency intersected with finite positive published road distances; learned adjacency is not used as road connectivity",
-        "edge_lengths": "Published DCRNN sensor-to-sensor road distances in meters",
+        "edge_lengths": f"Published DCRNN sensor-to-sensor road distances in meters ({distance_file})",
         "edge_speed": "Harmonic mean of endpoint sensor speeds; speeds are surrogates for the entire connection",
         "static_speed": "Per-sensor mean of valid training observations only",
         "replay": "Actual held-out five-minute sensor speeds, piecewise constant; integrate across interval boundaries; missing truth or horizon overflow discards the trip for all policies",

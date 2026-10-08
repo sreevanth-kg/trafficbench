@@ -1,4 +1,4 @@
-"""Train and evaluate all baselines on identical, leakage-free METR-LA windows."""
+"""Train and evaluate all baselines on identical, leakage-free traffic windows."""
 
 import csv
 from datetime import datetime, timezone
@@ -13,7 +13,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from .data import Windows, limit_origins, load_data
-from .metrics import speed_metrics
+from .metrics import regime_frequencies, speed_metrics
 from .models import GraphWaveNet, SensorLSTM
 
 
@@ -183,7 +183,7 @@ def run(args):
     truth = np.stack([data.raw[t + 1:t + 13] for t in origins["test"]])
     report = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "dataset": "METR-LA", "speed_units": "mph", "sampling_minutes": 5,
+        "dataset": data.dataset, "speed_units": "mph", "sampling_minutes": 5,
         "history_steps": 12, "forecast_steps": 12,
         "input_features": ["training-normalized causally filled speed", "time of day fraction"],
         "scope": "smoke_subset" if any(len(origins[k]) < len(data.origins[k]) for k in origins) else "full_dataset",
@@ -194,6 +194,7 @@ def run(args):
         "split_boundaries": {"train_end_exclusive": str(data.timestamps[data.train_end]),
                              "val_end_exclusive": str(data.timestamps[data.val_end])},
         "samples": {k: {"used": len(origins[k]), "available": len(data.origins[k])} for k in origins},
+        "regime_frequencies": regime_frequencies(data, origins),
         "dataset_manifest": json.loads((Path(args.data) / "manifest.json").read_text()),
         "software": {"torch": torch.__version__, "numpy": np.__version__, "cuda": torch.version.cuda,
                      "device": str(device), "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None},

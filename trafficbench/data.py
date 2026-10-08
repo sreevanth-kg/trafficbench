@@ -1,6 +1,7 @@
 """Raw-time splits, causal input imputation and memory-efficient forecasting windows."""
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import pickle
 
@@ -66,31 +67,45 @@ class TrafficData:
     static_speeds: np.ndarray
     history: int = 12
     horizon: int = 12
+    dataset: str = "METR-LA"
+    distance_file: str = "distances_la_2012.csv"
 
 
 def load_data(directory, history=12, horizon=12):
     directory = Path(directory)
+    manifest = json.loads((directory / "manifest.json").read_text())
+    observation_file = manifest.get("observation_file", "metr-la.h5")
+    adjacency_file = manifest.get("adjacency_file", "adj_mx.pkl")
     # The original dataset uses legacy pandas HDF5 attributes that modern
     # pandas/PyTables can decode inconsistently. Read its fixed-format numeric
     # block directly, preserving the explicit column and datetime axes.
-    with h5py.File(directory / "metr-la.h5", "r") as store:
-        group = store["df"]
-        columns = [value.decode("utf-8") for value in group["axis0"][:]]
-        block_columns = [value.decode("utf-8") for value in group["block0_items"][:]]
+    with h5py.File(directory / observation_file, "r") as store:
+        hdf_key = manifest.get("hdf_key", "df")
+        if hdf_key not in store and "hdf_key" not in manifest:
+            groups = [key for key, value in store.items() if isinstance(value, h5py.Group)]
+            if len(groups) != 1:
+                raise ValueError(f"Cannot identify the observation group in {observation_file}.")
+            hdf_key = groups[0]
+        if hdf_key not in store:
+            raise ValueError(f"Expected HDF5 key {hdf_key!r} for {manifest['dataset']}")
+        group = store[hdf_key]
+        decode = lambda value: value.decode("utf-8") if isinstance(value, bytes) else str(value)
+        columns = [decode(value) for value in group["axis0"][:]]
+        block_columns = [decode(value) for value in group["block0_items"][:]]
         if set(columns) != set(block_columns):
-            raise ValueError("Unexpected multi-block METR-LA HDF5 structure.")
+            raise ValueError(f"Unexpected multi-block {manifest['dataset']} HDF5 structure.")
         frame = pd.DataFrame(group["block0_values"][:],
                              index=pd.to_datetime(group["axis1"][:], unit="ns"),
                              columns=block_columns).reindex(columns=columns)
     if not isinstance(frame.index, pd.DatetimeIndex) or not frame.index.is_monotonic_increasing or not frame.index.is_unique:
-        raise ValueError("METR-LA needs a unique, increasing datetime index.")
+        raise ValueError(f"{manifest['dataset']} needs a unique, increasing datetime index.")
     sensor_ids = [str(value) for value in frame.columns]
     if len(set(sensor_ids)) != len(sensor_ids):
         raise ValueError("Duplicate sensor columns.")
     # This is the pinned, original DCRNN graph artifact downloaded by our bootstrap.
-    with (directory / "adj_mx.pkl").open("rb") as stream:
+    with (directory / adjacency_file).open("rb") as stream:
         graph_ids, _mapping, adjacency = pickle.load(stream, encoding="latin1")
-    graph_lookup = {str(sensor): position for position, sensor in enumerate(graph_ids)}
+    graph_lookup = {decode(sensor): position for position, sensor in enumerate(graph_ids)}
     if set(sensor_ids) != set(graph_lookup):
         raise ValueError("Observation sensor IDs do not match the adjacency artifact.")
     ordering = [graph_lookup[sensor] for sensor in sensor_ids]
@@ -106,9 +121,8 @@ def load_data(directory, history=12, horizon=12):
         [(filled - mean) / std, np.broadcast_to(fraction_of_day[:, None], raw.shape)], axis=-1,
     ).astype(np.float32)
     return TrafficData(raw, filled, valid, features, timestamps, sensor_ids, adjacency,
-                       origins, train_end, val_end, mean, std, means, history, horizon)
-
-
+                       origins, train_end, val_end, mean, std, means, history, horizon, manifest["dataset"],
+                       manifest.get("distance_file", "distances_la_2012.csv"))
 def limit_origins(origins, limit):
     """Spread a smoke-run subset across its split, rather than using only one day."""
     if limit > 0 and len(origins) > limit:

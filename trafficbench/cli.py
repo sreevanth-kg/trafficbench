@@ -7,7 +7,7 @@ from datetime import datetime
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    forecast = commands.add_parser("forecast", help="Train/evaluate METR-LA baselines.")
+    forecast = commands.add_parser("forecast", help="Train/evaluate traffic forecasting baselines.")
     forecast.add_argument("--data", default="data/metr-la")
     forecast.add_argument("--output", default=f"results/metr-la/{datetime.now():%Y%m%d-%H%M%S}")
     forecast.add_argument("--models", nargs="+", choices=["persistence", "lstm", "graphwavenet"], default=["persistence", "lstm", "graphwavenet"])
@@ -21,7 +21,7 @@ def main():
     forecast.add_argument("--congestion-mph", type=float, default=40.0)
     for split in ("train", "val", "test"):
         forecast.add_argument(f"--max-{split}", type=int, default=0, help="0 uses the full split; positive caps label a smoke run.")
-    routing = commands.add_parser("route", help="Evaluate policies on an abstract METR-LA sensor graph.")
+    routing = commands.add_parser("route", help="Evaluate policies on an abstract dataset sensor graph.")
     routing.add_argument("--data", default="data/metr-la")
     routing.add_argument("--forecasts", required=True)
     routing.add_argument("--pairs", type=int, default=20)

@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 from .data import Windows, limit_origins, load_data
 from .experiment import fit, make_model, predict, seed_everything
-from .metrics import speed_metrics
+from .metrics import regime_frequencies, speed_metrics
 from .regime import VARIANTS
 
 
@@ -52,11 +52,13 @@ def discover(args):
     output.mkdir(parents=True, exist_ok=True)
     report = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "dataset": data.dataset,
         "scope": "full_dataset" if len(train_origins) == len(data.origins["train"]) and len(val_origins) == len(data.origins["val"]) else "smoke_subset",
         "selection_rule": "Lowest validation masked MAE over all twelve horizons; checkpoints selected by the same rule; test forecasts are not generated during search",
         "arguments": vars(args), "train_windows": len(train_origins), "val_windows": len(val_origins),
         "model_code_hashes": model_code_hash(),
         "dataset_manifest": json.loads((Path(args.data) / "manifest.json").read_text()),
+        "regime_frequencies": regime_frequencies(data, {"train": train_origins, "val": val_origins}),
         "auxiliary_objectives": "Masked point MAE + 0.05 normalized pinball loss + 0.02 regime cross entropy (expert variants); rglflow_msr additionally uses 0.01 history-only domain-routing cross entropy",
         "candidates": {}, "selected": None,
     }
@@ -214,14 +216,14 @@ def export_bundle(bundle, checkpoint, name, data, corrections, source=None, eval
     shutil.copyfile(checkpoint, bundle / "model.pt")
     # Supports live inference without loading historical training/test files.
     np.savez_compressed(bundle / "graph.npz", adjacency=data.adjacency)
-    metadata = {"architecture": name, "mean": data.mean, "std": data.std, "sensor_ids": data.sensor_ids,
+    metadata = {"dataset": data.dataset, "architecture": name, "mean": data.mean, "std": data.std, "sensor_ids": data.sensor_ids,
                 "fallback_speeds_mph": data.static_speeds.tolist(), "history_steps": 12,
                 "forecast_minutes": list(range(5, 65, 5)), "interval_corrections_mph": corrections,
                 "interval_target_coverage": 0.8, "model_code_hashes": model_code_hash(),
                 "checkpoint_sha256": sha256(bundle / "model.pt"),
                  "graph_sha256": sha256(bundle / "graph.npz"),
                  "evaluation_forecast_filename": evaluation_forecast_filename or f"{name}_forecasts.npz",
-                 "source": source or "Single METR-LA network, fixed-budget research prototype; cross-network transfer not established"}
+                 "source": source or f"Single {data.dataset} network, fixed-budget research prototype; cross-network transfer not established"}
     (bundle / "metadata.json").write_text(json.dumps(metadata, indent=2, allow_nan=False) + "\n")
     # History only: the example request contains no future observations.
     origins = data.origins["test"]

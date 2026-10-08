@@ -16,7 +16,7 @@ from .data import Windows, limit_origins, load_data
 from .discovery import (calibrate_intervals, configure_device, distribution_predictions,
                         export_bundle, interval_metrics, model_code_hash, sha256)
 from .experiment import fit, make_model, predict, seed_everything
-from .metrics import speed_metrics
+from .metrics import regime_frequencies, speed_metrics
 from .regime import VARIANTS
 
 
@@ -210,7 +210,7 @@ def _run(args):
             raise ValueError("Train the study before evaluating")
         plan = {"created_at_utc": datetime.now(timezone.utc).isoformat(), "config": config,
                 "implementation_hashes": implementation_hashes(), "model_code_hashes": model_code_hash(),
-                "dataset_manifest": manifest,
+                "dataset": data.dataset, "dataset_manifest": manifest,
                 "scope": "full_dataset" if all(len(origins[k]) == len(data.origins[k]) for k in origins) else "smoke_subset",
                 "samples": {k: {"used": len(origins[k]), "available": len(data.origins[k])} for k in origins},
                 "selection_rule": "Lowest mean best-checkpoint validation MAE over all predefined seeds and twelve horizons; no test-model forecasts during selection",
@@ -305,8 +305,9 @@ def evaluate(args, directory, selection, data, origins, device, records=None):
     val_loader = DataLoader(Windows(data, origins["val"]), batch_size=args.batch_size, shuffle=False)
     truth = np.stack([data.raw[t + 1:t + 13] for t in origins["test"]])
     val_truth = np.stack([data.raw[t + 1:t + 13] for t in origins["val"]])
-    forecast_report = {"scope": selection["scope"], "dataset_manifest": selection["dataset_manifest"],
+    forecast_report = {"dataset": data.dataset, "scope": selection["scope"], "dataset_manifest": selection["dataset_manifest"],
                        "models": {}, "forecast_sources": {}, "protocol": selection["protocol"],
+                       "regime_frequencies": regime_frequencies(data, origins),
                        "seeds": args.seeds, "selected": name,
                        "selection_seeds": selection["selection_seeds"],
                        "confirmation_seeds": selection.get("confirmation_seeds", []),
@@ -367,7 +368,7 @@ def evaluate(args, directory, selection, data, origins, device, records=None):
                         print("Smoke subset: no deployable bundle exported", flush=True)
                     else:
                         export_bundle(directory / "bundle", checkpoint, method, data, corrections,
-                                      f"Single METR-LA network; {args.epochs}-epoch cap, {len(args.seeds)}-seed study; predefined deployment seed {seed}; cross-network transfer not established",
+                                      f"Single {data.dataset} network; {args.epochs}-epoch cap, {len(args.seeds)}-seed study; predefined deployment seed {seed}; cross-network transfer not established",
                                       evaluation_forecast_filename=f"{method}_seed{seed}_forecasts.npz")
                 for minutes, step in ((15, 2), (30, 5), (60, 11)) if baseline_predictions is not None else ():
                     valid = np.isfinite(truth[:, step]) & (truth[:, step] > 0)
@@ -431,7 +432,7 @@ def evaluate(args, directory, selection, data, origins, device, records=None):
             if available:
                 routing_comparisons.append({"model": candidate, "seed_group": group, "seeds_used": available,
                                             **route_seed_comparison(routing_report, candidate, available)})
-    summary = {"selection": str((directory / "selection.json").resolve()), "scope": selection["scope"],
+    summary = {"dataset": data.dataset, "selection": str((directory / "selection.json").resolve()), "scope": selection["scope"],
                "selected": name, "seeds": args.seeds, "maximum_epochs": args.epochs,
                "selection_seeds": selection["selection_seeds"], "confirmation_seeds": selection.get("confirmation_seeds", []),
                "confirmation_models": confirmation_models,
@@ -490,7 +491,8 @@ def format_statistics(values, decimals=3):
 
 
 def write_markdown(directory, summary):
-    lines = ["# Longer-training, multi-seed METR-LA comparison", "",
+    dataset_name = summary.get("dataset", "traffic dataset")
+    lines = [f"# Longer-training, multi-seed {dataset_name} comparison", "",
              f"Scope: **{summary['scope']}**. Maximum epochs: **{summary['maximum_epochs']}**. Seeds: **{summary['seeds']}**.",
              f"Selected using mean validation MAE from seeds **{summary['selection_seeds']} only**: **{summary['selected']}**.",
              f"Held-out training seeds: **{summary['confirmation_seeds']}**. Scheduled training complete: **{summary['schedule_complete']}**.",

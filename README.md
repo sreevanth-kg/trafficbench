@@ -1,6 +1,7 @@
-# METR-LA forecasting and routing benchmark
+# METR-LA and PEMS-BAY forecasting and routing benchmark
 
-Compare three established forecasting baselines with an evaluated liquid-graph model:
+Compare three established forecasting baselines with an evaluated liquid-graph model
+on both the 207-sensor METR-LA and 325-sensor PEMS-BAY benchmarks:
 
 1. **Persistence:** repeat the latest available sensor speed at every horizon.
 2. **LSTM:** a two-layer, 64-hidden-unit temporal model shared across sensors.
@@ -20,15 +21,38 @@ Linux x86-64, Python 3.12/3.13 and `uv`. The pinned Linux PyTorch build uses CUD
 
 ```bash
 uv sync
-python3 scripts/download_metr_la.py
+python3 scripts/download_metr_la.py --dataset metr-la
+python3 scripts/download_metr_la.py --dataset pems-bay
 uv run python -m unittest discover -s tests -v
 ```
 
-The downloader retrieves raw `metr-la.h5` from a pinned public mirror and the
+The downloader retrieves raw HDF5 observations from a pinned public mirror and the
 original DCRNN adjacency, sensor coordinates and road-distance artifacts. It
 checks the observation file's published SHA-256 and records artifact provenance
-in `data/metr-la/manifest.json`. This is the 207-sensor METR-LA dataset, not a
-synthetic substitute or pre-windowed mirror with unknown splits.
+in `data/metr-la/manifest.json` and `data/pems-bay/manifest.json`. These are the
+207-sensor METR-LA and 325-sensor PEMS-BAY datasets, not synthetic substitutes or
+pre-windowed mirrors with unknown splits. The PEMS-BAY observation mirror is pinned
+by revision and SHA-256; its original DCRNN release is hosted on Google Drive,
+while the DCRNN graph and distance artifacts are pinned to the source commit.
+
+### PEMS-BAY run
+
+The forecasting, proposed-model, study, inference, and abstract routing commands
+are dataset-agnostic. Point them at the Bay directory and use a Bay-specific output
+directory so artifacts cannot be mixed with METR-LA:
+
+```bash
+uv run trafficbench forecast --data data/pems-bay \
+  --output results/pems-bay/full --epochs 50 --patience 10
+uv run trafficbench route --data data/pems-bay \
+  --forecasts results/pems-bay/full
+```
+
+PEMS-BAY uses the same 5-minute, 12-step history/12-step forecast, raw-time
+70/10/20 split, training-only normalization, causal input filling, missing-label
+masking, congestion threshold, and routing replay protocol. Results remain
+dataset-specific; model weights and sensor ordering are never shared between the
+two networks.
 
 ## Run
 
@@ -76,6 +100,9 @@ converged baseline accuracy. Zero sample limits, the default, use all windows.
 - Congestion is predefined as **observed target speed below 40 mph**, excluding
   missing values. `--congestion-mph` changes this threshold before the experiment.
   The report includes valid/congested counts for every horizon.
+- The proposed model keeps the same fixed 40 mph congestion and 8 mph change
+  thresholds on both datasets; reports also include free-flow/congested/transition
+  frequencies by split and horizon so cross-dataset regime imbalance is visible.
 - The 15/30/60-minute metrics use forecast steps **3/6/12**, respectively.
 
 Graph WaveNet retains the original default 32 residual/dilation channels,
@@ -95,8 +122,10 @@ from METR-LA sensors to the unrelated Monaco GraphHopper fixture.
 
 - Directed connections are the dataset's positive physical distance-based
   adjacency entries with finite, positive published road distances.
-- Edge lengths come from `distances_la_2012.csv` in meters. Gaussian adjacency
-  weights and learned adaptive adjacency are **not** used as road lengths.
+- Edge lengths come from the dataset-specific DCRNN distance CSV in meters
+  (`distances_la_2012.csv` for METR-LA or `distances_bay_2017.csv` for PEMS-BAY).
+  Gaussian adjacency weights and learned adaptive adjacency are **not** used as
+  road lengths.
 - Edge speed is the harmonic mean of its endpoint sensor speeds. Static speeds
   are per-sensor means of valid training readings.
 - Pick fixed reachable multi-edge OD pairs from topology only, using a fixed

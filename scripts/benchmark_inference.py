@@ -44,7 +44,8 @@ def main():
             summary[name] = {"parameters": sum(p.numel() for p in model.parameters()),
                              "p50_ms": float(np.median(samples)), "p95_ms": float(np.quantile(samples, 0.95)),
                              "samples": len(samples)}
-    report = {"scope": "CPU model forward only; batch 1, all 207 sensors, 12 horizons; excludes HTTP, JSON and preprocessing",
+    sensors = len(engine.metadata["sensor_ids"])
+    report = {"scope": f"CPU model forward only; batch 1, all {sensors} sensors, 12 horizons; excludes HTTP, JSON and preprocessing",
               "threads": args.threads, "summary": summary}
     (bundle.parent / "cpu_inference_benchmark.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
