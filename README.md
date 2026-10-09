@@ -162,6 +162,10 @@ validation early stopping. Its runner automatically writes aggregate forecasting
 routing results and paired seed/day intervals when all runs finish; use the study
 status command below to inspect the current phase.
 
+[PEMS-BAY three-seed results](docs/pems-bay-3seed-results.md) report the completed
+Graph WaveNet versus RGL-Flow comparison on seeds 7, 21 and 42. The exact launcher,
+all utility scripts and reproducible commands are listed in [docs/scripts.md](docs/scripts.md).
+
 [Initial full-data, 10-epoch results](docs/initial-results.md) include forecasting,
 congestion metrics and the paired routing simulation.
 
